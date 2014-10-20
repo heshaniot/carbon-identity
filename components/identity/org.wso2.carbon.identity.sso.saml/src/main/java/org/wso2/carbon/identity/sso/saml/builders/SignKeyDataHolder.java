@@ -17,6 +17,8 @@
 */
 package org.wso2.carbon.identity.sso.saml.builders;
 
+import org.apache.commons.logging.Log;
+import org.apache.commons.logging.LogFactory;
 import org.apache.xml.security.signature.XMLSignature;
 import org.opensaml.xml.security.credential.Credential;
 import org.opensaml.xml.security.credential.CredentialContextSet;
@@ -24,6 +26,7 @@ import org.opensaml.xml.security.credential.UsageType;
 import org.opensaml.xml.security.x509.X509Credential;
 import org.osgi.framework.BundleContext;
 import org.osgi.util.tracker.ServiceTracker;
+import org.wso2.carbon.CarbonException;
 import org.wso2.carbon.base.ServerConfiguration;
 import org.wso2.carbon.context.PrivilegedCarbonContext;
 import org.wso2.carbon.core.util.KeyStoreManager;
@@ -33,7 +36,6 @@ import org.wso2.carbon.identity.sso.saml.SAMLSSOConstants;
 import org.wso2.carbon.identity.sso.saml.util.SAMLSSOUtil;
 import org.wso2.carbon.security.keystore.KeyStoreAdmin;
 import org.wso2.carbon.utils.AuthenticationObserver;
-import org.wso2.carbon.utils.TenantUtils;
 import org.wso2.carbon.utils.multitenancy.MultitenantConstants;
 import org.wso2.carbon.utils.multitenancy.MultitenantUtils;
 
@@ -57,17 +59,23 @@ public class SignKeyDataHolder implements X509Credential {
 
     private PrivateKey issuerPK = null;
 
+    public static final Log log = LogFactory.getLog(SignKeyDataHolder.class);
+
     private void initializeRegistry(int tenantId) {
         BundleContext bundleContext = SAMLSSOUtil.getBundleContext();
         if (bundleContext != null) {
             ServiceTracker tracker =
                     new ServiceTracker(bundleContext,
-                            AuthenticationObserver.class.getName(), null);
+                                       AuthenticationObserver.class.getName(), null);
             tracker.open();
             Object[] services = tracker.getServices();
             if (services != null) {
                 for (Object service : services) {
-                    ((AuthenticationObserver) service).startedAuthentication(tenantId);
+                    try {
+                        ((AuthenticationObserver) service).startedAuthentication(tenantId);
+                    } catch (CarbonException e) {
+                        log.error("Failed to Authenticate tenant " + tenantId);
+                    }
                 }
             }
             tracker.close();
@@ -77,9 +85,9 @@ public class SignKeyDataHolder implements X509Credential {
 
     public SignKeyDataHolder(String username) throws IdentityException {
         String keyAlias = null;
-        KeyStoreAdmin keyAdmin ;
-        KeyStoreManager keyMan ;
-        Certificate[] certificates ;
+        KeyStoreAdmin keyAdmin;
+        KeyStoreManager keyMan;
+        Certificate[] certificates;
         int tenantID;
         String tenantDomain;
         String userTenantDomain;
@@ -87,17 +95,17 @@ public class SignKeyDataHolder implements X509Credential {
 
         try {
 
-            userTenantDomain =  MultitenantUtils.getTenantDomain(username);
+            userTenantDomain = MultitenantUtils.getTenantDomain(username);
             spTenantDomain = PrivilegedCarbonContext.getThreadLocalCarbonContext().getTenantDomain();
-            
+
             if (!SAMLSSOUtil.isSaaSApplication() && !spTenantDomain.equalsIgnoreCase(userTenantDomain)) {
                 throw new IdentityException("Service Provider tenant domian must be equal to user tenant domain"
-                        + " for non-SaaS applications");
+                                            + " for non-SaaS applications");
             }
-            
+
             String signWithValue = IdentityUtil.getProperty(
                     SAMLSSOConstants.FileBasedSPConfig.USE_AUTHENTICATED_USER_DOMAIN_CRYPTO);
-            if (signWithValue != null  && "true".equalsIgnoreCase(signWithValue.trim())) {
+            if (signWithValue != null && "true".equalsIgnoreCase(signWithValue.trim())) {
                 tenantDomain = userTenantDomain;
                 tenantID = SAMLSSOUtil.getRealmService().getTenantManager().
                         getTenantId(tenantDomain);
@@ -107,7 +115,7 @@ public class SignKeyDataHolder implements X509Credential {
             }
 
             initializeRegistry(tenantID);
-            
+
             if (tenantID != MultitenantConstants.SUPER_TENANT_ID) {
                 String keyStoreName = SAMLSSOUtil.generateKSNameFromDomainName(tenantDomain);
                 keyAlias = tenantDomain;
@@ -134,7 +142,7 @@ public class SignKeyDataHolder implements X509Credential {
                         "Security.KeyStore.KeyAlias");
 
                 keyAdmin = new KeyStoreAdmin(tenantID,
-                        SAMLSSOUtil.getRegistryService().getGovernanceSystemRegistry());
+                                             SAMLSSOUtil.getRegistryService().getGovernanceSystemRegistry());
                 keyMan = KeyStoreManager.getInstance(tenantID);
 
                 issuerPK = (PrivateKey) keyAdmin.getPrivateKey(keyAlias, true);
